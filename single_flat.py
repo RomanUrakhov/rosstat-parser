@@ -1,11 +1,12 @@
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 import requests
-import re
-from TimeCheck import Profiler
+import os
+from utils.TimeCheck import Profiler
+from utils.TSVUtil import write_file
 
 
 def load_page_content():
-    url = 'https://rosreestr.net/kadastr/24-47-0000000-1488'
+    url = 'https://rosreestr.net/kadastr/66-06-2501026-80'
     response = None
     try:
         response = requests.get(url)
@@ -63,7 +64,7 @@ def main():
     if not page_text:
         return
     data = get_apt_info(page_text)
-    print(data)
+    write_file(os.getcwd()+'/out/apt_out.tsv', data)
 
 
 if __name__ == '__main__':
