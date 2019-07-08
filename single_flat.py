@@ -1,20 +1,35 @@
 from bs4 import BeautifulSoup
 import requests
 import os
-from utils.TimeCheck import Profiler
-from utils.TSVUtil import write_file
+from utils.time_check import Profiler
+from utils.tsv_export import write_file
+from address import grab_addresses
+from cadastr import grab_cadastres
+import re
+from cadastr import address_parse
+
+# cities = {
+#     'perm': 'permskiy-kray',
+#     'ekaterinburg': 'sverdlovskaya-oblast',
+#     'penza': 'penzenskaya-oblast',
+#     'tver': 'tverskaya-oblast',
+#     'tomsk': 'tomskaya-oblast'
+# }
+
+cities = {
+    'perm': 'permskiy-kray'
+}
 
 
-def load_page_content():
-    url = 'https://rosreestr.net/kadastr/66-06-2501026-80'
+def load_page_content(url, headers=None):
     response = None
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers=headers)
     except requests.exceptions.ConnectionError:
         print('dns lookup failed')
 
     if response:
-        return response.text
+        return response.json()
     return None
 
 
@@ -60,13 +75,29 @@ def beautify(data):
 
 
 def main():
-    page_text = load_page_content()
+    url = 'https://rosreestr.net/kadastr/59-01-0000000-61158'
+    page_text = load_page_content(url)
     if not page_text:
         return
     data = get_apt_info(page_text)
-    write_file(os.getcwd()+'/out/apt_out.tsv', data)
+    write_file(os.getcwd() + '/out/apt_out.tsv', data)
 
 
 if __name__ == '__main__':
     with Profiler() as p:
-        main()
+        grab_cadastres(cities)
+        # url = 'https://rosegrn.su/api/FormStep2.php'
+        # params = {
+        #     'c_number': 'c_number',
+        #     'address_ddt': 'г+Пермь,+ул+25+Октября,+д+5',
+        #     'region_ddt': 'Пермский',
+        #     'city_ddt': 'Пермь',
+        #     'street_type_full_ddt': 'улица',
+        #     'street_ddt': '25 Октября',
+        #     'house_ddt': '5',
+        # }
+        # response = requests.get(url=url, params=params)
+        # html = response.text
+        # cd = set(re.findall(r'\d{2}:\d{2}:\d{6,7}:\d+', html))
+        # print(len(cd))
+        # # grab_cadastres(cities=cities)
