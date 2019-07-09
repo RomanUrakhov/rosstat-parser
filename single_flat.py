@@ -86,18 +86,3 @@ def main():
 if __name__ == '__main__':
     with Profiler() as p:
         grab_cadastres(cities)
-        # url = 'https://rosegrn.su/api/FormStep2.php'
-        # params = {
-        #     'c_number': 'c_number',
-        #     'address_ddt': 'г+Пермь,+ул+25+Октября,+д+5',
-        #     'region_ddt': 'Пермский',
-        #     'city_ddt': 'Пермь',
-        #     'street_type_full_ddt': 'улица',
-        #     'street_ddt': '25 Октября',
-        #     'house_ddt': '5',
-        # }
-        # response = requests.get(url=url, params=params)
-        # html = response.text
-        # cd = set(re.findall(r'\d{2}:\d{2}:\d{6,7}:\d+', html))
-        # print(len(cd))
-        # # grab_cadastres(cities=cities)
