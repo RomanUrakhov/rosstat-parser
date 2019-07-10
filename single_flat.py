@@ -1,12 +1,13 @@
-from bs4 import BeautifulSoup
-import requests
+import asyncio
+import csv
+import json
 import os
+from concurrent.futures import ThreadPoolExecutor
+from time import sleep
+
+import requests
+
 from utils.time_check import Profiler
-from utils.tsv_export import write_file
-from address import grab_addresses
-from cadastr import grab_cadastres
-import re
-from cadastr import address_parse
 
 # cities = {
 #     'perm': 'permskiy-kray',
@@ -20,69 +21,121 @@ cities = {
     'perm': 'permskiy-kray'
 }
 
+apartments = []
+not_found = 0
 
-def load_page_content(url, headers=None):
-    response = None
+
+def fill_file(city):
+    dirname = os.getcwd() + '/out/apartments'
     try:
-        response = requests.get(url, headers=headers)
-    except requests.exceptions.ConnectionError:
-        print('dns lookup failed')
-
-    if response:
-        return response.json()
-    return None
-
-
-def get_container(text):
-    soup = BeautifulSoup(text, 'html.parser')
-    # контейнер с информацией о квартире
-    apt_container = soup.find('div', {'class': 'test__data'})
-    return apt_container
-
-
-def get_main_info(keys, values):
-    need = ['Тип', 'Кадастровый номер', 'Регион', 'Кадастровый район', 'Почтовый индекс',
-            'Адрес полный', 'Адрес по документам', 'Площадь', 'Кадастровая стоимость']
-    result = {k: v for k, v in zip(keys, values) if k in need}
-    return result
+        os.mkdir(dirname)
+    except OSError as e:
+        pass
+    filename = dirname + '/' + city + '.tsv'
+    try:
+        with open(filename, mode='a', encoding='UTF-8', newline='') as output_file:
+            writer = csv.DictWriter(output_file, delimiter='\t', fieldnames=apartments[0].keys())
+            if os.stat(filename).st_size == 0:
+                writer.writeheader()
+            for apartment in apartments:
+                writer.writerow(apartment)
+    except IOError:
+        print('I/O Error')
 
 
-def get_apt_info(page_content):
-    apt_container = get_container(page_content)
-    items = apt_container.find_all('div', recursive=False)
-
-    keys = []
-    values = []
-    for item in items:
-        title_and_data = item.text.split(': ', 1)
-        if len(title_and_data) != 1:
-            keys.append(title_and_data[0])
-            values.append(title_and_data[1])
-
-    d = get_main_info(keys, values)
-    beautify(d)
-    return d
+def read_file(city):
+    dirname = os.getcwd() + '/out/cadastres'
+    filename = dirname + '/' + city + '.csv'
+    cadastres = []
+    try:
+        with open(filename, mode='r', encoding='UTF-8', newline='') as input_file:
+            reader = csv.reader(input_file, lineterminator='\n')
+            for cadastre in reader:
+                cadastres.append(cadastre[0])
+    except IOError:
+        print("I/O Error")
+    return cadastres
 
 
-def beautify(data):
-    cost = data['Кадастровая стоимость']
-    offset = len(cost) - cost.find('.') - 1
-    data['Кадастровая стоимость'] = cost[:-offset]
+def fetch(session, cadastre, city):
+    url = 'https://kadastrmap.ru/new_api.php?q=' + cadastre + '&f238774bdb830a42bff5ef2d34c0126=771'
+    headers = {
+        'Host': 'kadastrmap.ru',
+        'User-Agent': 'User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:67.0) Gecko/20100101 Firefox/67.0',
+        'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': 'https://kadastrmap.ru/?kad_no=' + cadastre,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Connection': 'keep-alive',
+        'TE': 'Trailers'
+    }
+    sleep(0.25)
+    with session.get(url, headers=headers) as response:
+        try:
+            if response.status_code == 200:
+                print('считано {0}'.format(url))
+            else:
+                print('не считано по коду: %d' % response.status_code)
 
-    area = data['Площадь']
-    offset = len(area) - area.find('(') + 1
-    data['Площадь'] = area[:-offset]
+            data = response.json()['info']
+            if 'дом' not in data['objectName']:
+                a_type = data['objectName']
+                a_type = str.strip(a_type)
+                a_type = str.lower(a_type)
+                a_type = str.replace(a_type, ' №', '')
+                a_type = str.replace(a_type, '-комнатная ', '')
+                apt_info = {
+                    'Тип': a_type,
+                    'Кадастровый номер': data['objectCn'],
+                    'Адрес': data['mergedAddress'],
+                    'Площадь': data['areaValue'],
+                    'Кадастровая стоимость': data['cadCost']
+                }
+                apartments.append(apt_info)
+                if len(apartments) > 1000:
+                    print('################### ВЫГРУЗИЛ 1000 В ФАЙЛ ######################')
+                    fill_file(city)
+                    apartments.clear()
+        except json.JSONDecodeError:
+            print('Упал на url::' + url)
+        except KeyError:
+            global not_found
+            not_found += 1
+            print('Вот тут есть JSON, но нет info::' + url)
+
+
+async def worker_function(cadastres, city):
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        with requests.Session() as session:
+            loop = asyncio.get_event_loop()
+            tasks = [
+                loop.run_in_executor(
+                    executor,
+                    fetch,
+                    *(session, cadastre, city)
+                ) for cadastre in cadastres
+            ]
+            for response in await asyncio.gather(*tasks):
+                pass
 
 
 def main():
-    url = 'https://rosreestr.net/kadastr/59-01-0000000-61158'
-    page_text = load_page_content(url)
-    if not page_text:
-        return
-    data = get_apt_info(page_text)
-    write_file(os.getcwd() + '/out/apt_out.tsv', data)
+    for city in cities:
+        try:
+            cadastres = read_file(city=city)
+            print(len(cadastres))
+            loop = asyncio.get_event_loop()
+            future = asyncio.ensure_future(worker_function(cadastres=cadastres, city=city))
+            loop.run_until_complete(future)
+        except requests.exceptions as e:
+            pass
+        finally:
+            print('################################### ВЫГРУЖАЮ ОСТАТКИ #########################################')
+            fill_file(city)
+            print(os.stat(os.getcwd() + '/out/apartments/' + city + '.tsv').st_size)
+            print('По кадастровым номера не найдено %d квартир' % not_found)
 
 
 if __name__ == '__main__':
     with Profiler() as p:
-        grab_cadastres(cities)
+        main()

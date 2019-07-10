@@ -224,6 +224,6 @@ def grab_cadastres(cities):
 
 
 def get_cadastres(city):
-    filename = os.getcwd() + '/out/cadastres/' + city + '.txt'
-    with open(filename, mode='r', encoding='UTF-8') as input_file:
+    filename = os.getcwd() + '/out/cadastres/' + city + '.csv'
+    with open(filename, mode='r', encoding='UTF-8', newline='') as input_file:
         print('oop')
