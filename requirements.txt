@@ -1,4 +1,3 @@
-eventlet
 beautifulsoup4==4.7.1
 bs4==0.0.1
 certifi==2019.6.16

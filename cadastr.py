@@ -9,6 +9,7 @@ from address import get_addresses
 from address import grab_addresses
 
 cadastres = []
+current = 0
 
 
 def fill_files(city):
@@ -35,7 +36,10 @@ def address_parse(address):
     settlement = {'п': 'поселок', 'мкр': 'мкр', 'снт': 'снт', 'с': 'село'}
     region_dict = {
         'Пермь': 'Пермский',
-        'Екатеринбург': 'Свердловская'
+        'Екатеринбург': 'Свердловская',
+        'Пенза': 'Пензенская',
+        'Томск': 'Томская',
+        'Тверь': 'Тверская'
     }
     # приоритет: город[->населенный пункт]->улица->дом[->корпус/строение]
     # address_ddt=г+Екатеринбург,+поселок+Садовый,+ул+Верстовая,+д+8
@@ -167,17 +171,18 @@ def address_parse(address):
     return result
 
 
-def fetch(session, url, city):
+def fetch(session, url, city, total):
     with session.get(url=url) as response:
-        data = response.text
         if response.status_code != 200:
             print("FAILURE::{0}".format(url))
-        print('считано ' + url)
-        unique = set(re.findall(r'\d{2}:\d{2}:\d{6,7}:\d+', data))
-        cadastres.extend(list(unique))
-        if len(cadastres) > 1000:
-            fill_files(city)
-            cadastres.clear()
+        else:
+            global current
+            current += 1
+            print('считано %d/%d адресов' % (current, total))
+            if not response.text == '':
+                data = response.text
+                unique = set(re.findall(r'\d{2}:\d{2}:\d{6,7}:\d+', data))
+                cadastres.extend(list(unique))
 
 
 async def worker_function(urls, city):
@@ -188,7 +193,7 @@ async def worker_function(urls, city):
                 loop.run_in_executor(
                     executor,
                     fetch,
-                    *(session, url, city)
+                    *(session, url, city, len(urls))
                 ) for url in urls
             ]
             for response in await asyncio.gather(*tasks):
@@ -200,6 +205,7 @@ def grab_cadastres(cities):
 
     for city in cities:
         addresses = get_addresses(city)
+        print('Обработка города %s, всего адресов: %d' % (city, len(addresses)))
         try:
             # получаем список url каждого дома в городе city
             urls = []
@@ -210,20 +216,12 @@ def grab_cadastres(cities):
                     url += '%s=%s&' % (key, data.get(key))
                 url = url[:-1]
                 urls.append(url)
-            print(len(urls))
             # Инициализируем асинхронную функцию worker_function
             loop = asyncio.get_event_loop()
-            future = asyncio.ensure_future(worker_function(urls=urls[0:20], city=city))
+            future = asyncio.ensure_future(worker_function(urls=urls, city=city))
             loop.run_until_complete(future)
 
         except requests.exceptions as e:
             pass
         finally:
             fill_files(city)
-    return None
-
-
-def get_cadastres(city):
-    filename = os.getcwd() + '/out/cadastres/' + city + '.csv'
-    with open(filename, mode='r', encoding='UTF-8', newline='') as input_file:
-        print('oop')

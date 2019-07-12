@@ -8,6 +8,7 @@ from time import sleep
 import requests
 
 from utils.time_check import Profiler
+from cadastr import grab_cadastres
 
 # cities = {
 #     'perm': 'permskiy-kray',
@@ -22,7 +23,9 @@ cities = {
 }
 
 apartments = []
+retry_cadastres = []
 not_found = 0
+current = 0
 
 
 def fill_file(city):
@@ -57,7 +60,7 @@ def read_file(city):
     return cadastres
 
 
-def fetch(session, cadastre, city):
+def fetch(session, cadastre, city, total):
     url = 'https://kadastrmap.ru/new_api.php?q=' + cadastre + '&f238774bdb830a42bff5ef2d34c0126=771'
     headers = {
         'Host': 'kadastrmap.ru',
@@ -69,33 +72,32 @@ def fetch(session, cadastre, city):
         'Connection': 'keep-alive',
         'TE': 'Trailers'
     }
-    sleep(0.25)
+    sleep(0.4)
     with session.get(url, headers=headers) as response:
         try:
-            if response.status_code == 200:
-                print('считано {0}'.format(url))
-            else:
+            if response.status_code != 200:
                 print('не считано по коду: %d' % response.status_code)
+                retry_cadastres.append(cadastre)
+            else:
+                global current
+                current += 1
+                print('считано %d/%d' % (current, total))
+                data = response.json()['info']
+                if 'дом' not in data['objectName']:
+                    a_type = data['objectName']
+                    a_type = str.strip(a_type)
+                    a_type = str.lower(a_type)
+                    a_type = str.replace(a_type, ' №', '')
+                    a_type = str.replace(a_type, '-комнатная ', '')
+                    apt_info = {
+                        'Тип': a_type,
+                        'Кадастровый номер': data['objectCn'],
+                        'Адрес': data['mergedAddress'],
+                        'Площадь': data['areaValue'],
+                        'Кадастровая стоимость': data['cadCost']
+                    }
+                    apartments.append(apt_info)
 
-            data = response.json()['info']
-            if 'дом' not in data['objectName']:
-                a_type = data['objectName']
-                a_type = str.strip(a_type)
-                a_type = str.lower(a_type)
-                a_type = str.replace(a_type, ' №', '')
-                a_type = str.replace(a_type, '-комнатная ', '')
-                apt_info = {
-                    'Тип': a_type,
-                    'Кадастровый номер': data['objectCn'],
-                    'Адрес': data['mergedAddress'],
-                    'Площадь': data['areaValue'],
-                    'Кадастровая стоимость': data['cadCost']
-                }
-                apartments.append(apt_info)
-                if len(apartments) > 1000:
-                    print('################### ВЫГРУЗИЛ 1000 В ФАЙЛ ######################')
-                    fill_file(city)
-                    apartments.clear()
         except json.JSONDecodeError:
             print('Упал на url::' + url)
         except KeyError:
@@ -105,14 +107,14 @@ def fetch(session, cadastre, city):
 
 
 async def worker_function(cadastres, city):
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         with requests.Session() as session:
             loop = asyncio.get_event_loop()
             tasks = [
                 loop.run_in_executor(
                     executor,
                     fetch,
-                    *(session, cadastre, city)
+                    *(session, cadastre, city, len(cadastres))
                 ) for cadastre in cadastres
             ]
             for response in await asyncio.gather(*tasks):
@@ -120,19 +122,26 @@ async def worker_function(cadastres, city):
 
 
 def main():
+    grab_cadastres(cities)
     for city in cities:
         try:
             cadastres = read_file(city=city)
-            print(len(cadastres))
+            print('Всего квартир найдено: %d' % len(cadastres))
             loop = asyncio.get_event_loop()
             future = asyncio.ensure_future(worker_function(cadastres=cadastres, city=city))
             loop.run_until_complete(future)
+
+            # Нужно добавить постобработку запросов, которые улетели по 503 коду (рогонять через retry_cadastres)
+            # if len(retry_cadastres) > 0:
+            #     loop = asyncio.get_event_loop()
+            #     future = asyncio.ensure_future(worker_function(cadastres=retry_cadastres, city=city))
+            #     loop.run_until_complete(future)
+
         except requests.exceptions as e:
             pass
         finally:
-            print('################################### ВЫГРУЖАЮ ОСТАТКИ #########################################')
+            print('Выгружаю в файл')
             fill_file(city)
-            print(os.stat(os.getcwd() + '/out/apartments/' + city + '.tsv').st_size)
             print('По кадастровым номера не найдено %d квартир' % not_found)
 
 
