@@ -1,26 +1,16 @@
-import requests
 import asyncio
 import csv
-import re
 import os
-
+import re
 from concurrent.futures import ThreadPoolExecutor
-from address import get_addresses
-from address import grab_addresses
+
+import requests
+
+from utils.file_helper import get_addresses
+from utils.file_helper import write_cadastres
 
 cadastres = []
 current = 0
-
-
-def fill_files(city):
-    try:
-        os.mkdir(os.getcwd() + '/out/cadastres')
-    except OSError as e:
-        pass
-    with open(os.getcwd() + '/out/cadastres/' + city + '.csv', mode='a', encoding='UTF-8', newline='') as output_file:
-        writer = csv.writer(output_file, lineterminator='\n')
-        for cadastre in cadastres:
-            writer.writerow([cadastre, ])
 
 
 def address_parse(address):
@@ -39,7 +29,9 @@ def address_parse(address):
         'Екатеринбург': 'Свердловская',
         'Пенза': 'Пензенская',
         'Томск': 'Томская',
-        'Тверь': 'Тверская'
+        'Тверь': 'Тверская',
+        'Ижевск': 'Удмуртская',
+        'Иркутск': 'Иркутская'
     }
     # приоритет: город[->населенный пункт]->улица->дом[->корпус/строение]
     # address_ddt=г+Екатеринбург,+поселок+Садовый,+ул+Верстовая,+д+8
@@ -201,10 +193,10 @@ async def worker_function(urls, city):
 
 
 def grab_cadastres(cities):
-    grab_addresses(cities)
-
     for city in cities:
-        addresses = get_addresses(city)
+        global current
+        current = 0
+        addresses = get_addresses(f"{os.getcwd()}/out/addresses", city)
         print('Обработка города %s, всего адресов: %d' % (city, len(addresses)))
         try:
             # получаем список url каждого дома в городе city
@@ -224,4 +216,4 @@ def grab_cadastres(cities):
         except requests.exceptions as e:
             pass
         finally:
-            fill_files(city)
+            write_cadastres(f"{os.getcwd()}/out/cadastres", city, cadastres)

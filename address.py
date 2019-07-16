@@ -1,14 +1,6 @@
 import os
 import requests
-
-
-def fill_files(city, houses):
-    addresses = []
-    for house in houses:
-        addresses.append(house['address'])
-
-    with open(os.getcwd() + '/out/addresses/' + city + '.txt', mode='w', encoding='UTF-8') as output_file:
-        output_file.writelines("%s\n" % address for address in addresses)
+from utils.file_helper import write_addresses
 
 
 def grab_addresses(cities):
@@ -26,14 +18,11 @@ def grab_addresses(cities):
         if response:
             json_obj = response.json()
             houses = json_obj['rows']
-            fill_files(city, houses)
+
+            addresses = [house['address'] for house in houses]
+            print(f"В городе {city} найдено {len(addresses)} адресов. Записываю в файл...")
+            write_addresses(f"{os.getcwd()}/out/addresses", city, addresses)
+
         else:
             continue
     response.close()
-
-
-def get_addresses(city):
-    filename = os.getcwd() + '/out/addresses/' + city + '.txt'
-    with open(filename, mode='r', encoding='UTF-8') as input_file:
-        addresses = [address.rstrip() for address in input_file.readlines()]
-    return addresses

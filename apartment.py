@@ -1,5 +1,4 @@
 import asyncio
-import csv
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -7,61 +6,19 @@ from time import sleep
 
 import requests
 
-from utils.time_check import Profiler
-from cadastr import grab_cadastres
-
-# cities = {
-#     'perm': 'permskiy-kray',
-#     'ekaterinburg': 'sverdlovskaya-oblast',
-#     'penza': 'penzenskaya-oblast',
-#     'tver': 'tverskaya-oblast',
-#     'tomsk': 'tomskaya-oblast'
-# }
-
-cities = {
-    'perm': 'permskiy-kray'
-}
+from utils.file_helper import get_cadastres
+from utils.file_helper import write_apartments
 
 apartments = []
 retry_cadastres = []
+error = 0
 not_found = 0
 current = 0
-
-
-def fill_file(city):
-    dirname = os.getcwd() + '/out/apartments'
-    try:
-        os.mkdir(dirname)
-    except OSError as e:
-        pass
-    filename = dirname + '/' + city + '.tsv'
-    try:
-        with open(filename, mode='a', encoding='UTF-8', newline='') as output_file:
-            writer = csv.DictWriter(output_file, delimiter='\t', fieldnames=apartments[0].keys())
-            if os.stat(filename).st_size == 0:
-                writer.writeheader()
-            for apartment in apartments:
-                writer.writerow(apartment)
-    except IOError:
-        print('I/O Error')
-
-
-def read_file(city):
-    dirname = os.getcwd() + '/out/cadastres'
-    filename = dirname + '/' + city + '.csv'
-    cadastres = []
-    try:
-        with open(filename, mode='r', encoding='UTF-8', newline='') as input_file:
-            reader = csv.reader(input_file, lineterminator='\n')
-            for cadastre in reader:
-                cadastres.append(cadastre[0])
-    except IOError:
-        print("I/O Error")
-    return cadastres
+retry = False
 
 
 def fetch(session, cadastre, city, total):
-    url = 'https://kadastrmap.ru/new_api.php?q=' + cadastre + '&f238774bdb830a42bff5ef2d34c0126=771'
+    url = f"https://kadastrmap.ru/new_api.php?q={cadastre}&f238774bdb830a42bff5ef2d34c0126=771"
     headers = {
         'Host': 'kadastrmap.ru',
         'User-Agent': 'User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:67.0) Gecko/20100101 Firefox/67.0',
@@ -72,16 +29,16 @@ def fetch(session, cadastre, city, total):
         'Connection': 'keep-alive',
         'TE': 'Trailers'
     }
-    sleep(0.4)
+    sleep(0.3)
     with session.get(url, headers=headers) as response:
         try:
             if response.status_code != 200:
                 print('не считано по коду: %d' % response.status_code)
-                retry_cadastres.append(cadastre)
+                if not retry:
+                    global error
+                    error += 1
+                    retry_cadastres.append(cadastre)
             else:
-                global current
-                current += 1
-                print('считано %d/%d' % (current, total))
                 data = response.json()['info']
                 if 'дом' not in data['objectName']:
                     a_type = data['objectName']
@@ -97,6 +54,12 @@ def fetch(session, cadastre, city, total):
                         'Кадастровая стоимость': data['cadCost']
                     }
                     apartments.append(apt_info)
+                    global current
+                    current += 1
+                    print('считано %d/%d' % (current, total))
+                if retry:
+                    k = retry_cadastres.index(cadastre)
+                    retry_cadastres.pop(k)
 
         except json.JSONDecodeError:
             print('Упал на url::' + url)
@@ -107,7 +70,7 @@ def fetch(session, cadastre, city, total):
 
 
 async def worker_function(cadastres, city):
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         with requests.Session() as session:
             loop = asyncio.get_event_loop()
             tasks = [
@@ -121,30 +84,32 @@ async def worker_function(cadastres, city):
                 pass
 
 
-def main():
-    grab_cadastres(cities)
+def grab_apartments(cities):
     for city in cities:
+        global current
+        current = 0
         try:
-            cadastres = read_file(city=city)
+            cadastres = get_cadastres(f"{os.getcwd()}/out/cadastres", city)
             print('Всего квартир найдено: %d' % len(cadastres))
+
             loop = asyncio.get_event_loop()
             future = asyncio.ensure_future(worker_function(cadastres=cadastres, city=city))
             loop.run_until_complete(future)
 
-            # Нужно добавить постобработку запросов, которые улетели по 503 коду (рогонять через retry_cadastres)
-            # if len(retry_cadastres) > 0:
-            #     loop = asyncio.get_event_loop()
-            #     future = asyncio.ensure_future(worker_function(cadastres=retry_cadastres, city=city))
-            #     loop.run_until_complete(future)
+            print('Выгружаю в файл %d записей' % current)
 
-        except requests.exceptions as e:
-            pass
+            write_apartments(f"{os.getcwd()}/out/apartments", city, apartments)
+            apartments.clear()
+
+            print('По кадастровым номерм не найдено %d квартир' % not_found)
+            print('По кадастровым номерам не обработано %d квартир' % error)
+
+        except Exception as e:
+            print(f"Какая-то ошибка: {e}")
         finally:
-            print('Выгружаю в файл')
-            fill_file(city)
-            print('По кадастровым номера не найдено %d квартир' % not_found)
-
-
-if __name__ == '__main__':
-    with Profiler() as p:
-        main()
+            if len(apartments) != 0:
+                print('Выгружаю в файл %d записей' % len(apartments))
+                write_apartments(f"{os.getcwd()}/out/apartments", city, apartments)
+                apartments.clear()
+                print('По кадастровым номерм не найдено %d квартир' % not_found)
+                print('По кадастровым номерам не обработано %d квартир' % error)
